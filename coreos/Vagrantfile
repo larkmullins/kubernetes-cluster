@@ -1,0 +1,109 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+num_servers = 3
+num_workers = 3
+
+# install required plugins
+required_plugins = %w( vagrant-ignition vagrant-disksize )
+required_plugins.each do |plugin|
+  exec "vagrant plugin install #{plugin};vagrant #{ARGV.join(" ")}" unless Vagrant.has_plugin? plugin || ARGV[0] == 'plugin'
+end
+
+$provision = <<-SCRIPT
+mkdir -p /opt/bin &> /dev/null
+cd /opt &> /dev/null
+wget https://github.com/kubernetes/kubernetes/releases/download/v1.8.14/kubernetes.tar.gz &> /dev/null
+tar -xzf kubernetes.tar.gz &> /dev/null
+rm -f kubernetes.tar.gz &> /dev/null
+./kubernetes/cluster/get-kube-binaries.sh &> /dev/null
+tar -xvzf kubernetes/server/kubernetes-server-linux-amd64.tar.gz &> /dev/null
+cp kubernetes/client/bin/kubectl /opt/bin/ &> /dev/null
+cp kubernetes/server/bin/{hyperkube,kubeadm,kube-apiserver,kubelet,kube-proxy} /opt/bin/ &> /dev/null
+export PATH=/opt/bin:$PATH &> /dev/null
+SCRIPT
+
+Vagrant.configure(2) do |config|
+    config.ssh.insert_key = false # use vagrant's insecure key
+    config.disksize.size  = '50GB'
+
+    # setup Virtualbox for CoreOS
+    config.vm.provider :virtualbox do |vb|
+        config.ignition.enabled  = true
+        vb.check_guest_additions = false
+        vb.functional_vboxsf     = false
+        vb.customize ["modifyvm", :id, "--uart1", "0x3F8", "4"]
+    end
+
+    config.vm.box = "coreos-stable"
+    config.vm.box_url = "https://stable.release.core-os.net/amd64-usr/current/coreos_production_vagrant.box"
+    config.vm.synced_folder ".", "/vagrant", type: "rsync"
+
+    # setup etcd
+    config.vm.define hostname = "etcd" do |node|
+        node.vm.hostname = hostname
+        node.vm.network :private_network, ip: "172.2.2.2"
+        config.ignition.ip = "172.2.2.2"
+
+        node.vm.provider :virtualbox do |vb|
+            vb.gui      = false
+            vb.memory   = 1024
+            vb.cpus     = 1
+            vb.customize ["modifyvm", :id, "--cpuexecutioncap", "100"]
+
+            config.ignition.config_obj  = vb
+            config.ignition.hostname    = hostname
+            config.ignition.drive_name  = "config-etcd"
+        end
+    end
+
+    # setup servers
+    (1..num_servers).each do |idx|
+        config.vm.define hostname = "%s-%02d" % ["server", idx] do |node|
+            # set hostname
+            node.vm.hostname = hostname
+
+            # set ip address for server
+            node.vm.network :private_network, ip: "172.1.1.#{idx+100}"
+            config.ignition.ip = "172.1.1.#{idx+100}"
+
+            node.vm.provider :virtualbox do |vb|
+                vb.gui      = false
+                vb.memory   = 1024
+                vb.cpus     = 1
+                vb.customize ["modifyvm", :id, "--cpuexecutioncap", "100"]
+
+                config.ignition.config_obj  = vb
+                config.ignition.hostname    = hostname
+                config.ignition.drive_name  = "config-server-" + idx.to_s
+            end
+
+            node.vm.provision "shell", inline: $provision
+        end
+    end
+
+    # setup workers
+    (1..num_workers).each do |idx|
+        config.vm.define hostname = "%s-%02d" % ["worker", idx] do |node|
+            # set hostname
+            node.vm.hostname = hostname
+
+            # set ip address for server
+            node.vm.network :private_network, ip: "172.1.1.#{idx+100}"
+            config.ignition.ip = "172.1.1.#{idx+100}"
+
+            node.vm.provider :virtualbox do |vb|
+                vb.gui      = false
+                vb.memory   = 1024
+                vb.cpus     = 1
+                vb.customize ["modifyvm", :id, "--cpuexecutioncap", "100"]
+
+                config.ignition.config_obj  = vb
+                config.ignition.hostname    = hostname
+                config.ignition.drive_name  = "config-worker-" + idx.to_s
+            end
+            
+            node.vm.provision "shell", inline: $provision
+        end
+    end
+end
