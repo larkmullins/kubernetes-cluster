@@ -1,0 +1,24 @@
+/usr/local/sbin/kube-apiserver \
+ --bind-address=0.0.0.0 \
+ --advertise_address=172.1.1.101 \
+ --admission-control=NamespaceLifecycle,LimitRanger,ServiceAccount,PersistentVolumeLabel,DefaultStorageClass,DefaultTolerationSeconds,ResourceQuota \
+ --allow-privileged=true \
+ --anonymous-auth=false \
+ --apiserver-count=1 \
+ --authorization-mode=RBAC,AlwaysAllow \
+ --basic-auth-file=/etc/security/kubernetes/basic_auth.csv \
+ --client-ca-file=/etc/security/kubernetes/ca.pem \
+ --etcd-servers=http://172.2.2.101:4001,http://172.2.2.102,http://172.2.2.103:4001 \
+ --insecure-port=8080 \
+ --runtime-config=api/all=true,batch/v2alpha1=true,rbac.authorization.k8s.io/v1alpha1=true \
+ --secure-port=6443 \
+ --service-cluster-ip-range=100.65.0.0/24 \
+ --storage-backend=etcd2 \
+ --tls-cert-file=/etc/security/kubernetes/apiserver.pem \
+ --tls-private-key-file=/etc/security/kubernetes/apiserver-key.pem \
+ --tls-ca-file=/etc/security/kubernetes/ca.pem \
+ --kubelet-certificate-authority=/etc/security/kubernetes/ca.pem \
+ --token-auth-file=/etc/security/kubernetes/known_tokens.csv \
+ --portal-net=10.64.0.0/16 \
+ --logtostderr=true \
+ --v=6

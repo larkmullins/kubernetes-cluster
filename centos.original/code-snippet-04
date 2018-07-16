@@ -1,0 +1,12 @@
+127.0.0.1   localhost
+192.168.0.147 k8s01.virtual.local     k8s01
+192.168.0.148 k8s02.virtual.local     k8s02
+192.168.0.149 k8s03.virtual.local     k8s03
+192.168.0.150 k8s-api.virtual.local   k8s-etcd.virtual.local  k8s-api k8s-etcd
+
+
+127.0.0.1   localhost
+172.1.1.101 server-01.cluster.cluster       server-01
+172.1.1.102 server-02.cluster.cluster       server-02
+172.1.1.103 server-03.cluster.cluster       server-03
+172.1.1.104 kubernetes-api.cluster.local    kubernetes-api

@@ -1,0 +1,34 @@
+[Unit]
+Description=Kubernetes Kubelet Server
+Documentation=https://github.com/kubernetes/kubernetes
+After=docker.service
+
+[Service]
+ExecStart=/usr/local/bin/kubelet \
+  --non-masquerade-cidr=100.64.0.0/15 \
+  --allow-privileged=true \
+  --enable-custom-metrics=true \
+  --babysit-daemons=true \
+  --cgroup-root=/ \
+  --api-servers=https://k8s-api.virtual.local \
+  --cluster-dns=100.64.0.10 \
+  --cluster-domain=cluster.local \
+  --enable-debugging-handlers=true \
+  --eviction-hard=memory.available<100Mi,nodefs.available<10%,nodefs.inodesFree<5%,imagefs.available<10%,imagefs.inodesFree<5% \
+  --kubeconfig=/var/lib/kubelet/kubeconfig \
+  --pod-manifest-path=/etc/kubernetes/manifests \
+  --register-schedulable=true \
+  --container-runtime=docker \
+  --docker=unix:///var/run/docker.sock \
+  --tls-cert-file=/srv/kubernetes/server.crt \
+  --tls-private-key-file=/srv/kubernetes/server.key \
+  --client-ca-file=/srv/kubernetes/ca.pem \
+  --node-labels=kubernetes.io/role=master,node-role.kubernetes.io/master= \
+  --v=4
+Restart=always
+RestartSec=2s
+StartLimitInterval=0
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,28 @@
+[Unit]
+Description=Kubernetes Controller Manager Server
+Documentation=https://github.com/kubernetes/kubernetes
+After=docker.service
+
+[Service]
+ExecStart=/usr/local/bin/kube-controller-manager \
+  --allocate-node-cidrs=true \
+  --attach-detach-reconcile-sync-period=1m0s \
+  --cluster-cidr=100.64.0.0/16 \
+  --cluster-name=k8s.virtual.local \
+  --leader-elect=true \
+  --root-ca-file=/srv/kubernetes/ca.pem \
+  --service-account-private-key-file=/srv/kubernetes/apiserver-key.pem \
+  --use-service-account-credentials=true \
+  --kubeconfig=/var/lib/kube-controller-manager/kubeconfig \
+  --cluster-signing-cert-file=/srv/kubernetes/ca.pem \
+  --cluster-signing-key-file=/srv/kubernetes/ca-key.pem \
+  --service-cluster-ip-range=100.65.0.0/24 \
+  --configure-cloud-routes=false \
+  --v=4
+Restart=always
+RestartSec=2s
+StartLimitInterval=0
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

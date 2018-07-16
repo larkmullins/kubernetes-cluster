@@ -1,0 +1,178 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+num_etcd    = 3
+num_servers = 3
+num_workers = 3
+
+# install required plugins
+required_plugins = %w[vagrant-disksize]
+return if !Vagrant.plugins_enabled?
+plugins_to_install = required_plugins.select { |plugin| !Vagrant.has_plugin? plugin }
+if plugins_to_install.any?  
+  system "vagrant plugin install #{plugins_to_install.join(' ')}"
+  exit system 'vagrant up'
+end
+
+Vagrant.configure(2) do |config|
+    config.ssh.insert_key = false # use vagrant's insecure key
+    config.disksize.size  = '50GB'
+
+    # setup Virtualbox for CoreOS
+    config.vm.provider :virtualbox do |vb|
+        vb.check_guest_additions = false
+        vb.functional_vboxsf     = false
+        vb.customize ["modifyvm", :id, "--uart1", "0x3F8", "4"]
+    end
+
+    config.vm.box = "centos/7"
+    config.vm.synced_folder ".", "/vagrant", type: "rsync"
+
+    # config.trigger.before :up do |trigger|
+    #     trigger.run = { inline: "cp provision/services/etcd.conf provision/artifacts/etcd.conf" }
+    # end
+
+    # etcd
+    etcd_cluster_ips = Array.new
+    (1..num_etcd).each do |id|
+        etcd_cluster_ips.push "etcd-0#{id}=http://172.1.1.#{id+100}:2380"
+    end
+    (1..num_etcd).each do |id|
+        config.vm.define hostname = "%s-%02d" % ["etcd", id] do |etcd|
+            etcd.vm.hostname = hostname
+            etcd.vm.network :private_network, ip: "172.1.1.#{id+100}"
+
+            # virtualbox settings
+            etcd.vm.provider :virtualbox do |vb|
+                vb.gui      = false
+                vb.memory   = 1024
+                vb.cpus     = 1
+                vb.customize ["modifyvm", :id, "--cpuexecutioncap", "100"]
+            end
+
+            # privision
+            etcd.vm.provision "shell", path: "provision/setup-nodes.sh"
+            etcd.vm.provision "shell", path: "provision/setup-etcd.sh", args: ["etcd-0#{id}", "172.1.1.#{id+100}", etcd_cluster_ips.join(",")]
+        end
+    end
+
+    # servers
+    # build server ip array
+    server_ips = Array.new
+    (1..num_servers).each do |id|
+        server_ips.push "172.1.1.#{id+100}"
+    end
+
+    # build etcd cluster string
+    # etcd_cluster = Array.new
+    # server_ips.each_with_index do |ipaddr,idx|
+    #     etcd_cluster.push "etcd0#{idx+1}=http://#{ipaddr}:2380"
+    # end
+
+    server_ips.each_with_index do |ipaddr, idx|
+        config.vm.define hostname = "%s-%02d" % ["server", idx+1] do |server|
+            server.vm.hostname = hostname
+            server.vm.network :private_network, ip: ipaddr
+
+            # virtualbox settings
+            server.vm.provider :virtualbox do |vb|
+                vb.gui      = false
+                vb.memory   = 1024
+                vb.cpus     = 1
+                vb.customize ["modifyvm", :id, "--cpuexecutioncap", "100"]
+            end
+
+            # privision
+            # server.vm.provision "shell", path: "provision/setup-nodes.sh"
+            # server.vm.provision "shell", path: "provision/setup-etcd.sh", args: ["etcd0#{idx+1}", ipaddr, etcd_cluster.join(",")]
+            # server.vm.provision "shell", path: "provision/setup-flanneld.sh", args: [etcd_cluster_ips.join(",")]
+        end
+    end
+
+    # setup etcd
+    # (1..num_etcd).each do |idx|
+    #     config.vm.define hostname = "%s-%02d" % ["etcd", idx] do |node|
+    #         node.vm.hostname = hostname
+    #         node.vm.network :private_network, ip: "172.2.2.#{idx+100}"
+
+    #         node.vm.provider :virtualbox do |vb|
+    #             vb.gui      = false
+    #             vb.memory   = 1024
+    #             vb.cpus     = 1
+    #             vb.customize ["modifyvm", :id, "--cpuexecutioncap", "100"]
+    #         end
+
+    #         node.vm.provision "file", source: "provision/etcd/etcd-0#{idx}.service", destination: "/tmp/etcd.service"
+    #         node.vm.provision "shell", inline: $etcd_provision
+    #         # node.vm.provision "shell", inline: $etcd_setup
+    #     end
+    # end
+
+    # (1..num_etcd).each do |idx|
+    #     config.vm.define "%s-%02d" % ["etcd", idx] do |node|
+    #         node.vm.provision "shell", inline: $etcd_setup
+    #     end
+    # end
+
+    # setup servers
+    # (1..num_servers).each do |idx|
+    #     config.vm.define hostname = "%s-%02d" % ["server", idx] do |node|
+    #         # set hostname
+    #         node.vm.hostname = hostname
+
+    #         # set ip address for server
+    #         node.vm.network :private_network, ip: "172.1.1.#{idx+100}"
+
+    #         node.vm.provider :virtualbox do |vb|
+    #             vb.gui      = false
+    #             vb.memory   = 1024
+    #             vb.cpus     = 1
+    #             vb.customize ["modifyvm", :id, "--cpuexecutioncap", "100"]
+    #         end
+
+    #         node.vm.provision "file", source: "provision/ssl.conf", destination: "/tmp/ssl.conf"
+    #         node.vm.provision "file", source: "provision/flanneld/flanneld.service", destination: "/tmp/flanneld.service"
+    #         node.vm.provision "file", source: "provision/kubernetes/kube-apiserver.service", destination: "/tmp/kube-apiserver.service"
+    #         node.vm.provision "file", source: "provision/kubernetes/kubelet.service", destination: "/tmp/kubelet.service"
+    #         node.vm.provision "file", source: "provision/kubernetes/kube-controller-manager.service", destination: "/tmp/kube-controller-manager.service"
+    #         node.vm.provision "shell", inline: $node_provision
+
+    #         node.vm.provision "shell" do |s|
+    #             s.inline = <<-SHELL
+    #                 echo "SERVER_IP=172.1.1.$1"          >> /etc/kubernetes/env
+    #                 echo "CLUSTER_CIDR=100.65.0.0/24"    >> /etc/kubernetes/env
+    #                 echo "ETCD01=17.2.2.101"             >> /etc/kubernetes/env
+    #                 echo "ETCD02=17.2.2.102"             >> /etc/kubernetes/env
+    #                 echo "ETCD03=17.2.2.103"             >> /etc/kubernetes/env
+    #                 echo "FLANNEL_NETWORK=10.64.0.0/16"  >> /etc/kubernetes/env
+    #             SHELL
+    #             s.args = "#{idx+100}"
+    #         end
+
+    #         node.vm.provision "shell", inline: $server_provision
+    #         node.vm.provision "shell", inline: $flannel_provision
+    #     end
+    # end
+
+    # setup workers
+    # (1..num_workers).each do |idx|
+    #     config.vm.define hostname = "%s-%02d" % ["worker", idx] do |node|
+    #         # set hostname
+    #         node.vm.hostname = hostname
+
+    #         # set ip address for server
+    #         node.vm.network :private_network, ip: "172.1.1.#{idx+100}"
+
+    #         node.vm.provider :virtualbox do |vb|
+    #             vb.gui      = false
+    #             vb.memory   = 1024
+    #             vb.cpus     = 1
+    #             vb.customize ["modifyvm", :id, "--cpuexecutioncap", "100"]
+    #         end
+            
+    #         node.vm.provision "file", source: "provision/flanneld/flanneld.service", destination: "/tmp/flanneld.service"
+    #         node.vm.provision "shell", inline: $node_provision
+    #         node.vm.provision "shell", inline: $flannel_provision
+    #     end
+    # end
+end

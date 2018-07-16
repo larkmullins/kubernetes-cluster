@@ -1,0 +1,4 @@
+kubectl config set-cluster k8s.cluster.local \
+  --certificate-authority=/etc/security/kubernetes/ca.pem \
+  --embed-certs=true \
+  --server=https://kubernetes-api.cluster.local:6443

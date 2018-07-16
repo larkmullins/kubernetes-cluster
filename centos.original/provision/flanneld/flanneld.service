@@ -11,14 +11,13 @@ Before=docker.service
 Type=notify
 Restart=always
 RestartSec=5
-EnvironmentFile=-/etc/sysconfig/flanneld
-EnvironmentFile=-/etc/sysconfig/docker-network
 ExecStart=/usr/bin/flanneld \
- -etcd-endpoints=${FLANNEL_ETCD_ENDPOINTS} \
- -etcd-prefix=${FLANNEL_ETCD_PREFIX} \
+ -etcd-endpoints=http://172.2.2.101:4001,http://172.2.2.102:4001,http://172.2.2.103:4001 \
  -logtostderr=true \
  -ip-masq=true \
- -iface=eth1
+ -iface=eth1 \
+ -subnet-dir=/var/lib/flanneld/networks \
+ -subnet-file=/var/lib/flanneld/subnet.env
 
 [Install]
 WantedBy=multi-user.target

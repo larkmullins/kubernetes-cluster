@@ -1,0 +1,15 @@
+/usr/local/sbin/kube-controller-manager \
+> >   --allocate-node-cidrs=true \
+> >   --attach-detach-reconcile-sync-period=1m0s \
+> >   --cluster-cidr=100.64.0.0/16 \
+> >   --cluster-name=k8s.virtual.local \
+> >   --leader-elect=true \
+> >   --root-ca-file=/etc/security/kubernetes/ca.pem \
+> >   --service-account-private-key-file=/etc/security/kubernetes/apiserver-key.pem \
+> >   --use-service-account-credentials=true \
+> >   --kubeconfig=/var/lib/kubernetes/kube-controller-manager/kubeconfig \
+> >   --cluster-signing-cert-file=/etc/security/kubernetes/ca.pem \
+> >   --cluster-signing-key-file=/etc/security/kubernetes/ca-key.pem \
+> >   --service-cluster-ip-range=100.65.0.0/24 \
+> >   --configure-cloud-routes=false \
+> >   --v=4

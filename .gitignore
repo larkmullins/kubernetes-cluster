@@ -3,5 +3,7 @@
 
 ## Files
 *.img
-*.vmdk
 *.merged
+*.pem
+*.srl
+*.vmdk

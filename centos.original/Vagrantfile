@@ -1,0 +1,216 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+num_etcd    = 3
+num_servers = 3
+num_workers = 3
+
+# install required plugins
+required_plugins = %w( vagrant-disksize )
+required_plugins.each do |plugin|
+  exec "vagrant plugin install #{plugin};vagrant #{ARGV.join(" ")}" unless Vagrant.has_plugin? plugin || ARGV[0] == 'plugin'
+end
+
+$etcd_provision = <<-SCRIPT
+sudo yum install -y etcd
+sudo mv /tmp/etcd.service /lib/systemd/system/etcd.service
+sudo systemctl daemon-reload
+sudo yum update -y
+sudo systemctl enable etcd
+sudo systemctl start etcd &
+SCRIPT
+
+$flannel_provision = <<-SCRIPT
+sudo yum install -y flannel
+sudo mv /tmp/flanneld.service /lib/systemd/system/flanneld.service
+sudo systemctl enable flanneld
+sudo systemctl start flanneld &
+SCRIPT
+
+$etcd_setup = <<-SCRIPT
+etcdctl set /atomic.io/network/config '{ "Network": "100.64.0.0/16", "SubnetLen": 24, "Backend": {"Type": "vxlan"} }'
+SCRIPT
+
+$node_provision = <<-SCRIPT
+curl -L -o kubernetes.tar.gz https://github.com/kubernetes/kubernetes/releases/download/v1.8.14/kubernetes.tar.gz
+tar -xzf kubernetes.tar.gz
+rm -f kubernetes.tar.gz
+kubernetes/cluster/get-kube-binaries.sh
+tar -xvzf kubernetes/server/kubernetes-server-linux-amd64.tar.gz
+sudo cp kubernetes/client/bin/kubectl /usr/local/sbin/
+sudo cp kubernetes/server/bin/{hyperkube,kubeadm,kube-apiserver,kube-controller-manager,kubelet,kube-proxy} /usr/local/sbin/
+rm -rf /tmp/kubernetes
+sudo mkdir -p /var/lib/kubernetes/kube-controller-manager,kubelet,kube-proxy,kube-scheduler}
+sudo mkdir -p /etc/{kubernetes,sysconfig}
+sudo mkdir -p /etc/kubernetes/manifests
+sudo cp /tmp/flanneld.service /lib/systemd/system/flanneld.service
+sudo yum install -y docker
+sudo yum update -y
+sudo systemctl enable flanneld
+sudo systemctl start flanneld.service &
+sudo /bin/su -c "echo 'net.ipv4.ip_forward = 1'                                 >> /etc/sysctl.conf"
+sudo /bin/su -c "echo 'net.ipv4.conf.all.forwarding = 1'                        >> /etc/sysctl.conf"
+sudo /bin/su -c "echo 'net.ipv4.ip_nonlocal_bind = 1'                           >> /etc/sysctl.conf"
+sudo /bin/su -c "echo 'net.bridge.bridge-nf-call-iptables = 1'                  >> /etc/sysctl.conf"
+sudo /bin/su -c "echo 'net.ipv6.conf.all.disable_ipv6 = 1'                      >> /etc/sysctl.conf"
+sudo /bin/su -c "echo 'net.ipv6.conf.default.disable_ipv6 = 1'                  >> /etc/sysctl.conf"
+sudo /bin/su -c "echo 'net.ipv6.conf.lo.disable_ipv6 = 1'                       >> /etc/sysctl.conf"
+sudo /bin/su -c "echo '172.1.1.101 server-01.cluster.local server-01'           >> /etc/hosts"
+sudo /bin/su -c "echo '172.1.1.102 server-02.cluster.local server-02'           >> /etc/hosts"
+sudo /bin/su -c "echo '172.1.1.103 server-03.cluster.local server-03'           >> /etc/hosts"
+sudo /bin/su -c "echo '172.1.1.111 kubernetes-api.cluster.local kubernetes-api' >> /etc/hosts"
+sudo /bin/su -c "echo 'nameserver 172.1.1.1'    > /etc/resolv.conf"
+sudo /bin/su -c "echo 'nameserver 8.8.8.8'      >> /etc/resolv.conf"
+sudo /bin/su -c "echo 'search virtual.local'    >> /etc/resolv.conf"
+SCRIPT
+
+$server_provision = <<-SCRIPT
+sudo mkdir -p /etc/security/kubernetes
+mv /tmp/ssl.conf /etc/security/kubernetes
+cd /etc/security/kubernetes
+sudo openssl genrsa -out ca-key.pem 4096
+sudo openssl req -x509 -new -nodes -key ca-key.pem -days 10000 -out ca.pem -subj "/CN=kube-ca"
+sudo openssl genrsa -out apiserver-key.pem 4096
+sudo openssl req -new -key apiserver-key.pem -out apiserver.csr -subj "/CN=kube-apiserver" -config ssl.conf
+sudo openssl x509 -req -in apiserver.csr -CA ca.pem -CAkey ca-key.pem -CAcreateserial -out apiserver.pem -days 7200 -extensions v3_req -extfile ssl.conf
+sudo cp apiserver.pem server.crt
+sudo cp apiserver-key.pem server.key
+for item in admin kube-proxy kubelet kube-controller-manager kube-scheduler
+do
+    sudo openssl genrsa -out ${item}-key.pem 4096
+    sudo openssl req -new -key ${item}-key.pem -out ${item}.csr -subj "/CN=${item}"
+    sudo openssl x509 -req -in ${item}.csr -CA ca.pem -CAkey ca-key.pem -CAcreateserial -out ${item}.pem
+done
+TOKEN=$(dd if=/dev/urandom bs=128 count=1 2>/dev/null | base64 | tr -d "=+/" | dd bs=32 count=1 2>/dev/null)
+echo "$TOKEN,admin,admin,system:masters" >> /etc/kubernetes/basic_auth.csv
+kubectl config set-cluster k8s.cluster.local --certificate-authority=/etc/security/kubernetes/ca.pem \
+    --embed-certs=true --server=https://kubernetes-api.cluster.local
+kubectl config set-credentials admin --client-certificate=/etc/security/kubernetes/admin.pem \
+    --client-key=/etc/security/kubernetes/admin-key.pem --embed-certs=true --token=$TOKEN
+kubectl config set-context k8s.cluster.local --cluster=k8s.cluster.local --user=admin
+kubectl config use-context k8s.cluster.local
+for item in kubelet kube-proxy kube-controller-manager kube-scheduler
+do
+    TOKEN=$(dd if=/dev/urandom bs=128 count=1 2>/dev/null | base64 | tr -d "=+/" | dd bs=32 count=1 2>/dev/null)
+    echo "$TOKEN,$item,$item" >> /etc/kubernetes/known_tokens.csv
+    kubectl config set-cluster k8s.cluster.local --certificate-authority=/etc/security/kubernetes/ca.pem \
+        --embed-certs=true --server=https://kubernetes-api.cluster.local --kubeconfig=/var/lib/kubernetes/${item}/kubeconfig
+    kubectl config set-credentials ${item} --client-certificate=/etc/security/kubernetes/${item}.pem \
+        --client-key=/etc/security/kubernetes/${item}-key.pem --embed-certs=true --token=$TOKEN \
+        --kubeconfig=/var/lib/kubernetes/${item}/kubeconfig
+    kubectl config set-context k8s.cluster.local --cluster=k8s.cluster.local --user=${item} \
+        --kubeconfig=/var/lib/kubernetes/${item}/kubeconfig
+    echo "$TOKEN,$item,$item" >> /etc/security/kubernetes/known_tokens.csv
+done
+sudo cp /tmp/kube-apiserver.service /lib/systemd/system/kube-apiserver.service
+sudo cp /tmp/kube-controller-manager.service /lib/systemd/system/kube-controller-manager.service
+sudo cp /tmp/kubelet.service /lib/systemd/system/kubelet.service
+sudo systemctl enable kube-apiserver.service
+sudo systemctl enable kube-controller-manager.service
+sudo systemctl enable kubelet.service
+sudo systemctl start kube-apiserver.service
+sudo systemctl start kube-controller-manager.service
+sudo systemctl start kubelet.service
+SCRIPT
+
+Vagrant.configure(2) do |config|
+    config.ssh.insert_key = false # use vagrant's insecure key
+    config.disksize.size  = '50GB'
+
+    # setup Virtualbox for CoreOS
+    config.vm.provider :virtualbox do |vb|
+        vb.check_guest_additions = false
+        vb.functional_vboxsf     = false
+        vb.customize ["modifyvm", :id, "--uart1", "0x3F8", "4"]
+    end
+
+    config.vm.box = "centos/7"
+    config.vm.synced_folder ".", "/vagrant", type: "rsync"
+
+    # setup etcd
+    (1..num_etcd).each do |idx|
+        config.vm.define hostname = "%s-%02d" % ["etcd", idx] do |node|
+            node.vm.hostname = hostname
+            node.vm.network :private_network, ip: "172.2.2.#{idx+100}"
+
+            node.vm.provider :virtualbox do |vb|
+                vb.gui      = false
+                vb.memory   = 1024
+                vb.cpus     = 1
+                vb.customize ["modifyvm", :id, "--cpuexecutioncap", "100"]
+            end
+
+            node.vm.provision "file", source: "provision/etcd/etcd-0#{idx}.service", destination: "/tmp/etcd.service"
+            node.vm.provision "shell", inline: $etcd_provision
+            # node.vm.provision "shell", inline: $etcd_setup
+        end
+    end
+
+    # (1..num_etcd).each do |idx|
+    #     config.vm.define "%s-%02d" % ["etcd", idx] do |node|
+    #         node.vm.provision "shell", inline: $etcd_setup
+    #     end
+    # end
+
+    # setup servers
+    (1..num_servers).each do |idx|
+        config.vm.define hostname = "%s-%02d" % ["server", idx] do |node|
+            # set hostname
+            node.vm.hostname = hostname
+
+            # set ip address for server
+            node.vm.network :private_network, ip: "172.1.1.#{idx+100}"
+
+            node.vm.provider :virtualbox do |vb|
+                vb.gui      = false
+                vb.memory   = 1024
+                vb.cpus     = 1
+                vb.customize ["modifyvm", :id, "--cpuexecutioncap", "100"]
+            end
+
+            node.vm.provision "file", source: "provision/ssl.conf", destination: "/tmp/ssl.conf"
+            node.vm.provision "file", source: "provision/flanneld/flanneld.service", destination: "/tmp/flanneld.service"
+            node.vm.provision "file", source: "provision/kubernetes/kube-apiserver.service", destination: "/tmp/kube-apiserver.service"
+            node.vm.provision "file", source: "provision/kubernetes/kubelet.service", destination: "/tmp/kubelet.service"
+            node.vm.provision "file", source: "provision/kubernetes/kube-controller-manager.service", destination: "/tmp/kube-controller-manager.service"
+            node.vm.provision "shell", inline: $node_provision
+
+            node.vm.provision "shell" do |s|
+                s.inline = <<-SHELL
+                    echo "SERVER_IP=172.1.1.$1"          >> /etc/kubernetes/env
+                    echo "CLUSTER_CIDR=100.65.0.0/24"    >> /etc/kubernetes/env
+                    echo "ETCD01=17.2.2.101"             >> /etc/kubernetes/env
+                    echo "ETCD02=17.2.2.102"             >> /etc/kubernetes/env
+                    echo "ETCD03=17.2.2.103"             >> /etc/kubernetes/env
+                    echo "FLANNEL_NETWORK=10.64.0.0/16"  >> /etc/kubernetes/env
+                SHELL
+                s.args = "#{idx+100}"
+            end
+
+            node.vm.provision "shell", inline: $server_provision
+            node.vm.provision "shell", inline: $flannel_provision
+        end
+    end
+
+    # setup workers
+    (1..num_workers).each do |idx|
+        config.vm.define hostname = "%s-%02d" % ["worker", idx] do |node|
+            # set hostname
+            node.vm.hostname = hostname
+
+            # set ip address for server
+            node.vm.network :private_network, ip: "172.1.1.#{idx+100}"
+
+            node.vm.provider :virtualbox do |vb|
+                vb.gui      = false
+                vb.memory   = 1024
+                vb.cpus     = 1
+                vb.customize ["modifyvm", :id, "--cpuexecutioncap", "100"]
+            end
+            
+            node.vm.provision "file", source: "provision/flanneld/flanneld.service", destination: "/tmp/flanneld.service"
+            node.vm.provision "shell", inline: $node_provision
+            node.vm.provision "shell", inline: $flannel_provision
+        end
+    end
+end

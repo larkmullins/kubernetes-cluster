@@ -1,0 +1,12 @@
+N7kU79kgwH93c4pMmQsZGCY8rgW85ASZ,kubelet,kubelet
+ciL4hUAfRit2EnYlDdnqXMnGeKwY3iAo,kube-proxy,kube-proxy
+i39wCsphNnlqysgGzRctoB8VDXft77YQ,kube-controller-manager,kube-controller-manager
+4MWMHEKVEeFXqGb1iXqB7yDwofQ4XrMs,kube-scheduler,kube-scheduler
+
+/usr/local/sbin/kubectl config set-cluster k8s.cluster.local --certificate-authority=/etc/security/kubernetes/ca.pem \
+    --embed-certs=true --server=https://kubernetes-api.cluster.local --kubeconfig=/var/lib/kubernetes/kube-scheduler/kubeconfig
+/usr/local/sbin/kubectl config set-credentials kube-scheduler --client-certificate=/etc/security/kubernetes/kube-scheduler.pem \
+    --client-key=/etc/security/kubernetes/kube-scheduler-key.pem --embed-certs=true --token=4MWMHEKVEeFXqGb1iXqB7yDwofQ4XrMs \
+    --kubeconfig=/var/lib/kubernetes/kube-scheduler/kubeconfig
+/usr/local/sbin/kubectl config set-context k8s.cluster.local --cluster=k8s.cluster.local --user=kube-scheduler \
+    --kubeconfig=/var/lib/kubernetes/kube-scheduler/kubeconfig

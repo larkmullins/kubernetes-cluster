@@ -6,71 +6,13 @@ num_servers = 3
 num_workers = 3
 
 # install required plugins
-required_plugins = %w( vagrant-disksize )
-required_plugins.each do |plugin|
-  exec "vagrant plugin install #{plugin};vagrant #{ARGV.join(" ")}" unless Vagrant.has_plugin? plugin || ARGV[0] == 'plugin'
-end
-
-$etcd_provision = <<-SCRIPT
-sudo yum install -y etcd
-sudo mv /tmp/etcd.service /lib/systemd/system/etcd.service
-sudo systemctl daemon-reload
-sudo systemctl enable etcd
-sudo systemctl start etcd.service &
-SCRIPT
-
-$node_provision = <<-SCRIPT
-curl -L -o /tmp/kubernetes.tar.gz https://github.com/kubernetes/kubernetes/releases/download/v1.8.14/kubernetes.tar.gz
-tar -xzf /tmp/kubernetes.tar.gz
-rm -f /tmp/kubernetes.tar.gz
-/tmp/kubernetes/cluster/get-kube-binaries.sh
-tar -xvzf /tmp/kubernetes/server/kubernetes-server-linux-amd64.tar.gz
-sudo cp /tmp/kubernetes/client/bin/kubectl /usr/local/sbin/
-sudo cp /tmp/kubernetes/server/bin/{hyperkube,kubeadm,kube-apiserver,kubelet,kube-proxy} /usr/local/sbin/
-rm -rf /tmp/kubernetes
-sudo mkdir -p /var/lib/kubernetes/kube-controller-manager,kubelet,kube-proxy,kube-scheduler}
-sudo mkdir -p /etc/{kubernetes,sysconfig}
-sudo mkdir -p /etc/kubernetes/manifests
-SCRIPT
-
-$server_provision = <<-SCRIPT
-sudo mkdir -p /etc/ssl/kubernetes
-cd /etc/ssl/kubernetes
-openssl genrsa -out ca-key.pem 4096
-openssl req -x509 -new -nodes -key ca-key.pem -days 10000 -out ca.pem -subj "/CN=kube-ca"
-openssl genrsa -out apiserver-key.pem 4096
-openssl req -new -key apiserver-key.pem -out apiserver.csr -subj "/CN=kube-apiserver" -config ssl.conf
-openssl x509 -req -in apiserver.csr -CA ca.pem -CAkey ca-key.pem -CAcreateserial -out apiserver.pem -days 7200 -extensions v3_req -extfile ssl.conf
-cp apiserver.pem server.crt
-cp apiserver-key.pem server.key
-for item in admin kube-proxy kubelet kube-controller-manager kube-scheduler
-do
-    openssl genrsa -out ${item}-key.pem 4096
-    openssl req -new -key ${item}-key.pem -out ${item}.csr -subj "/CN=${item}"
-    openssl x509 -req -in ${item}.csr -CA ca.pem -CAkey ca-key.pem -CAcreateserial -out ${item}.pem
-done
-TOKEN=$(dd if=/dev/urandom bs=128 count=1 2>/dev/null | base64 | tr -d "=+/" | dd bs=32 count=1 2>/dev/null)
-echo $TOKEN
-kubectl config set-cluster k8s.cluster.local --certificate-authority=/etc/ssl/kubernetes/ca.pem \
-    --embed-certs=true --server=https://kubernetes-api.cluster.local
-kubectl config set-credentials admin --client-certificate=/etc/ssl/kubernetes/admin.pem \
-    --client-key=/etc/ssl/kubernetes/admin-key.pem --embed-certs=true --token=$TOKEN
-kubectl config set-context k8s.cluster.local --cluster=k8s.cluster.local --user=admin
-kubectl config use-context k8s.cluster.local
-for item in kubelet kube-proxy kube-controller-manager kube-scheduler
-do
-    TOKEN=$(dd if=/dev/urandom bs=128 count=1 2>/dev/null | base64 | tr -d "=+/" | dd bs=32 count=1 2>/dev/null)
-    echo $TOKEN
-    kubectl config set-cluster k8s.cluster.local --certificate-authority=/etc/ssl/kubernetes/ca.pem \
-        --embed-certs=true --server=https://k8s.cluster.local --kubeconfig=/var/lib/kubernetes/${item}/kubeconfig
-    kubectl config set-credentials ${item} --client-certificate=/etc/ssl/kubernetes/${item}.pem \
-        --client-key=/etc/ssl/kubernetes/${item}-key.pem --embed-certs=true --token=$TOKEN \
-        --kubeconfig=/var/lib/kubernetes/${item}/kubeconfig
-    kubectl config set-context k8s.cluster.local --cluster=k8s.cluster.local --user=${item} \
-        --kubeconfig=/var/lib/kubernetes/${item}/kubeconfig
-    echo "$TOKEN,$item,$item" >> /etc/ssl/kubernetes/known_tokens.csv
-done
-SCRIPT
+# required_plugins = %w[vagrant-disksize]
+# return if !Vagrant.plugins_enabled?
+# plugins_to_install = required_plugins.select { |plugin| !Vagrant.has_plugin? plugin }
+# if plugins_to_install.any?  
+#   system "vagrant plugin install #{plugins_to_install.join(' ')}"
+#   exit system 'vagrant up'
+# end
 
 Vagrant.configure(2) do |config|
     config.ssh.insert_key = false # use vagrant's insecure key
@@ -86,63 +28,69 @@ Vagrant.configure(2) do |config|
     config.vm.box = "centos/7"
     config.vm.synced_folder ".", "/vagrant", type: "rsync"
 
-    # setup etcd
-    (1..num_etcd).each do |idx|
-        config.vm.define hostname = "%s-%02d" % ["etcd", idx] do |node|
-            node.vm.hostname = hostname
-            node.vm.network :private_network, ip: "172.2.2.#{idx+100}"
+    # set virtualbox settings
+    config.vm.provider :virtualbox do |vb|
+        vb.gui      = false
+        vb.memory   = 1024
+        vb.cpus     = 1
+        vb.customize ["modifyvm", :id, "--cpuexecutioncap", "100"]
+    end
 
-            node.vm.provider :virtualbox do |vb|
-                vb.gui      = false
-                vb.memory   = 1024
-                vb.cpus     = 1
-                vb.customize ["modifyvm", :id, "--cpuexecutioncap", "100"]
-            end
+    # etcd_ips        = Array.new
+    # etcd_cluster    = Array.new
+    # server_ips      = Array.new
+    # config.trigger.before :up do |trigger|
+    #     # build etcd ips and cluster arrays for later use
+    #     (1..num_etcd).each do |id|
+    #         ip = "172.1.1.#{id+100}"
+    #         etcd_ips.push ip
+    #         etcd_cluster.push "etcd-0#{id}=http://#{ip}:2380"
+    #     end
 
-            node.vm.provision "file", source: "provision/etcd/etcd-0#{idx}.service", destination: "/tmp/etcd.service"
-            node.vm.provision "shell", inline: $etcd_provision
+    #     (1..num_servers).each do |id|
+    #         server_ips.push "172.2.2.#{id+100}"
+    #     end
+
+    #     # copy required files to artifacts directory
+    #     `cp provision/services/etcd.conf provision/artifacts/etcd.conf`
+    #     `cp provision/services/etcd.service provision/artifacts/etcd.service`
+    # end
+
+    # etcd
+    (1..num_etcd).each do |id|
+        config.vm.define hostname = "%s-%02d" % ["etcd", id] do |etcd|
+            etcd.vm.hostname = hostname
+            etcd.vm.network :private_network, ip: "172.1.1.#{id+100}"
+
+            etcd.vm.provision "shell", inline: "
+                sudo yum install -y etcd
+                sudo cp /vagrant/provision/etcd/etcd-0#{id}.conf /etc/etcd/etcd.conf
+                sudo cp /vagrant/provision/etcd/etcd.service /lib/systemd/system
+                sudo systemctl daemon-reload
+                sudo systemctl enable etcd
+                sudo systemctl start etcd &
+            "
         end
     end
 
-    # setup servers
-    (1..num_servers).each do |idx|
-        config.vm.define hostname = "%s-%02d" % ["server", idx] do |node|
-            # set hostname
-            node.vm.hostname = hostname
+    # kube servers
+    (1..num_servers).each do |id|
+        config.vm.define hostname = "%s-%02d" % ["server", id] do |server|
+            server.vm.hostname = hostname
+            server.vm.network :private_network, ip: "172.2.2.#{id+100}"
 
-            # set ip address for server
-            node.vm.network :private_network, ip: "172.1.1.#{idx+100}"
-
-            node.vm.provider :virtualbox do |vb|
-                vb.gui      = false
-                vb.memory   = 1024
-                vb.cpus     = 1
-                vb.customize ["modifyvm", :id, "--cpuexecutioncap", "100"]
-            end
-
-            node.vm.provision "file", source: "provision/ssl.conf", destination: "/etc/ssl/kubernetes/ssl.conf"
-            node.vm.provision "shell", inline: $node_provision
-            node.vm.provision "shell", inline: $server_provision
-        end
-    end
-
-    # setup workers
-    (1..num_workers).each do |idx|
-        config.vm.define hostname = "%s-%02d" % ["worker", idx] do |node|
-            # set hostname
-            node.vm.hostname = hostname
-
-            # set ip address for server
-            node.vm.network :private_network, ip: "172.1.1.#{idx+100}"
-
-            node.vm.provider :virtualbox do |vb|
-                vb.gui      = false
-                vb.memory   = 1024
-                vb.cpus     = 1
-                vb.customize ["modifyvm", :id, "--cpuexecutioncap", "100"]
-            end
-            
-            node.vm.provision "shell", inline: $node_provision
+            server.vm.provision "shell", inline: "
+                sudo touch /etc/profile.d/etcd.sh
+                sudo echo export ETCD_ENDPOINTS=\"http://172.1.1.101:2379,http://172.1.1.102:2379,http://172.1.1.103:2379\" >> /etc/profile.d/etcd.sh
+                sudo yum install -y etcd flannel
+                etcdctl --endpoints ${ETCD_ENDPOINTS} \
+                    set /atomic.io/network/config '{ \"Network\": \"100.64.0.0/16\", \"SubnetLen\": 24, \"Backend\": {\"Type\": \"vxlan\"} }'
+                sudo cp /vagrant/provision/flanneld/flanneld.conf /etc/sysconfig/flanneld
+                sudo cp /vagrant/provision/flanneld/flanneld.service /lib/systemd/system
+                sudo systemctl daemon-reload
+                sudo systemctl enable flanneld
+                sudo systemctl start flanneld &
+            "
         end
     end
 end

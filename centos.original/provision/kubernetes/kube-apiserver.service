@@ -1,0 +1,38 @@
+[Unit]
+Description=Kubernetes API Server
+Documentation=https://github.com/kubernetes/kubernetes
+After=network.target flanneld.service
+
+[Service]
+EnvironmentFile=/etc/kubernetes/env
+#User=kube
+ExecStart=/usr/local/sbin/kube-apiserver \
+ --bind-address=0.0.0.0 \
+ --advertise_address=${SERVER_IP} \
+ --admission-control=NamespaceLifecycle,LimitRanger,ServiceAccount,PersistentVolumeLabel,DefaultStorageClass,DefaultTolerationSeconds,ResourceQuota \
+ --allow-privileged=true \
+ --anonymous-auth=false \
+ --apiserver-count=3 \
+ --authorization-mode=RBAC,AlwaysAllow \
+ --basic-auth-file=/etc/kubernetes/basic_auth.csv \
+ --client-ca-file=/etc/security/kubernetes/ca.pem \
+ --etcd-servers=http://${ETCD01}:4001,http://${ETCD02},http://${ETCD03}:4001 \
+ --runtime-config=api/all=true,batch/v2alpha1=true,rbac.authorization.k8s.io/v1alpha1=true \
+ --insecure-port=8080 \
+ --secure-port=6443 \
+ --service-cluster-ip-range=${CLUSTER_CIDR} \
+ --storage-backend=etcd2 \
+ --tls-cert-file=/etc/security/kubernetes/apiserver.pem \
+ --tls-private-key-file=/etc/security/kubernetes/apiserver-key.pem \
+ --tls-ca-file=/etc/security/kubernetes/ca.pem \
+ --kubelet-certificate-authority=/etc/security/kubernetes/ca.pem \
+ --token-auth-file=/etc/kubernetes/known_tokens.csv \
+ --portal-net=${FLANNEL_NETWORK} \
+ --logtostderr=true \
+ --v=6
+Restart=on-failure
+Type=notify
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
